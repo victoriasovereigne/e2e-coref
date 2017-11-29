@@ -1,0 +1,14 @@
+*.submit
+*.pyc
+*.v4_auto_conll
+*.jsonlines
+*.0
+*.txt
+*.txt.filtered
+*.tar.gz
+output*
+conll-2012/*
+docs/*
+html/*
+logs/*
+viz/*
