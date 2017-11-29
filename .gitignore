@@ -1,6 +1,6 @@
 *.submit
 *.pyc
-*.v4_auto_conll
+*_conll
 *.jsonlines
 *.0
 *.txt
