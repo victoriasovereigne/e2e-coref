@@ -25,10 +25,22 @@ def add_NER(jsonlines, output):
 			ner = [n[1] for n in ner]
 			data['ner_tag'].append(ner)
 	
-		fw.write(json.dumps(data))
+		fw.write(json.dumps(data)+'\n')
 	fw.close()
-			
-add_NER(sys.argv[1], sys.argv[2])
+
+
+def make_mini_dataset(filename, output, size):
+	f = open(filename)
+	lines = f.readlines()
+
+	fw = open(output, 'w')
+
+	for line in lines[:size]:
+		data = json.loads(line)
+		fw.write(json.dumps(data) + '\n')
+
+	fw.close()
+
 
 def read_jsonlines(predicted):
 	f = open(predicted)
@@ -105,3 +117,13 @@ def read_jsonlines(predicted):
 
 		print '\n'
 		# print '=============================================================='
+
+def main():
+	method = sys.argv[1]
+	print method
+	if method == 'add_NER':
+		add_NER(sys.argv[2], sys.argv[3])
+	elif method == 'mini':
+		make_mini_dataset(sys.argv[2], sys.argv[3], 10)
+	else:
+		read_jsonlines(sys.argv[2])
