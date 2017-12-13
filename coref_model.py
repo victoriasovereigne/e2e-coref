@@ -14,6 +14,9 @@ import metrics
 class CorefModel(object):
   def __init__(self, config):
     self.config = config
+
+    self.pos_tag_dict = util.load_pos_tags(config["pos_tag_path"])
+
     self.embedding_info = [(emb["size"], emb["lowercase"]) for emb in config["embeddings"]]
     self.embedding_size = sum(size for size, _ in self.embedding_info)
     self.char_embedding_size = config["char_embedding_size"]
@@ -24,7 +27,7 @@ class CorefModel(object):
     self.eval_data = None # Load eval data lazily.
 
     input_props = []
-    input_props.append((tf.float32, [None, None, self.embedding_size])) # Text embeddings.
+    input_props.append((tf.float32, [None, None, self.embedding_size])) # Text embeddings. --> sentences x words x embedding size
     input_props.append((tf.int32, [None, None, None])) # Character indices.
     input_props.append((tf.int32, [None])) # Text lengths.
     input_props.append((tf.int32, [None])) # Speaker IDs.
@@ -33,6 +36,8 @@ class CorefModel(object):
     input_props.append((tf.int32, [None])) # Gold starts.
     input_props.append((tf.int32, [None])) # Gold ends.
     input_props.append((tf.int32, [None])) # Cluster ids.
+
+    input_props.append((tf.float32, [None, None, len(self.pos_tag_dict)])) # POS tags --> sentences x tags
 
     self.queue_input_tensors = [tf.placeholder(dtype, shape) for dtype, shape in input_props]
     dtypes, shapes = zip(*input_props)
@@ -55,9 +60,19 @@ class CorefModel(object):
     optimizer = optimizers[self.config["optimizer"]](learning_rate)
     self.train_op = optimizer.apply_gradients(zip(gradients, trainable_params), global_step=self.global_step)
 
+  # ==================================================================
+  # training part
+  # ==================================================================
   def start_enqueue_thread(self, session):
       with open(self.config["train_path"]) as f:
-        train_examples = [json.loads(jsonline) for jsonline in f.readlines()]
+        # train_examples = [json.loads(jsonline) for jsonline in f.readlines()]
+        train_examples = []
+
+        for jsonline in f.readlines():
+          # print jsonline
+          j = json.loads(jsonline)          
+          train_examples.append(j)
+
       def _enqueue_loop():
         while True:
           random.shuffle(train_examples)
@@ -76,6 +91,9 @@ class CorefModel(object):
       starts, ends = [], []
     return np.array(starts), np.array(ends)
 
+  # ==================================================================
+  # important method where they deal with features
+  # ==================================================================
   def tensorize_example(self, example, is_training, oov_counts=None):
     clusters = example["clusters"]
 
@@ -90,6 +108,9 @@ class CorefModel(object):
     num_words = sum(len(s) for s in sentences)
     speakers = util.flatten(example["speakers"])
 
+    # add POS tag and NER
+    pos_tags = example["pos_tags"]
+
     assert num_words == len(speakers)
 
     max_sentence_length = max(len(s) for s in sentences)
@@ -97,6 +118,9 @@ class CorefModel(object):
     word_emb = np.zeros([len(sentences), max_sentence_length, self.embedding_size])
     char_index = np.zeros([len(sentences), max_sentence_length, max_word_length])
     text_len = np.array([len(s) for s in sentences])
+
+    pos_tag_emb = np.zeros([len(sentences), max_sentence_length, len(self.pos_tag_dict)])
+
     for i, sentence in enumerate(sentences):
       for j, word in enumerate(sentence):
         current_dim = 0
@@ -110,7 +134,15 @@ class CorefModel(object):
           word_emb[i, j, current_dim:current_dim + s] = util.normalize(d[current_word])
           current_dim += s
         char_index[i, j, :len(word)] = [self.char_dict[c] for c in word]
+        
+        # one hot encoding
+        pos_tag_emb[i, j, :] = np.zeros([len(self.pos_tag_dict)])
+        one = self.pos_tag_dict.get(pos_tags[i][j], 0)
+        pos_tag_emb[i, j, one] = 1
 
+    # print pos_tag_emb
+    # raw_input("pause")
+    
     speaker_dict = { s:i for i,s in enumerate(set(speakers)) }
     speaker_ids = np.array([speaker_dict[s] for s in speakers])
 
@@ -120,11 +152,11 @@ class CorefModel(object):
     gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
 
     if is_training and len(sentences) > self.config["max_training_sentences"]:
-      return self.truncate_example(word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids)
+      return self.truncate_example(word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb)
     else:
-      return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids
+      return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb
 
-  def truncate_example(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids):
+  def truncate_example(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb):
     max_training_sentences = self.config["max_training_sentences"]
     num_sentences = word_emb.shape[0]
     assert num_sentences > max_training_sentences
@@ -141,10 +173,12 @@ class CorefModel(object):
     gold_starts = gold_starts[gold_spans] - word_offset
     gold_ends = gold_ends[gold_spans] - word_offset
     cluster_ids = cluster_ids[gold_spans]
+    pos_tag_emb = pos_tag_emb[sentence_offset:sentence_offset + max_training_sentences,:,:]
 
-    return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids
+    return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb
 
-  def get_predictions_and_loss(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids):
+  def get_predictions_and_loss(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tags):
+  # def get_predictions_and_loss(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids):
     self.dropout = 1 - (tf.to_float(is_training) * self.config["dropout_rate"])
     self.lexical_dropout = 1 - (tf.to_float(is_training) * self.config["lexical_dropout_rate"])
 
@@ -160,8 +194,13 @@ class CorefModel(object):
       aggregated_char_emb = tf.reshape(flattened_aggregated_char_emb, [num_sentences, max_sentence_length, util.shape(flattened_aggregated_char_emb, 1)]) # [num_sentences, max_sentence_length, emb]
       text_emb_list.append(aggregated_char_emb)
 
+    if self.config["use_pos_tag"]:
+      text_emb_list.append(pos_tags)
+
     text_emb = tf.concat(text_emb_list, 2)
     text_emb = tf.nn.dropout(text_emb, self.lexical_dropout)
+
+    # print tf.shape(text_emb)
 
     text_len_mask = tf.sequence_mask(text_len, maxlen=max_sentence_length)
     text_len_mask = tf.reshape(text_len_mask, [num_sentences * max_sentence_length])
@@ -252,19 +291,42 @@ class CorefModel(object):
     return log_norm - marginalized_gold_scores # [num_mentions]
 
   def get_antecedent_scores(self, mention_emb, mention_scores, antecedents, antecedents_len, mention_starts, mention_ends, mention_speaker_ids, genre_emb):
+  # def get_antecedent_scores(self, mention_emb, mention_scores, antecedents, antecedents_len, mention_starts, mention_ends, mention_speaker_ids, genre_emb, mention_pos_tag_ids):
+    # print "mention_emb", mention_emb
+    # print "mention_scores", mention_scores
+    # print "antecedents", antecedents
+    # print "antecedents_len", antecedents_len
+    # print "mention_starts", mention_starts
+    # print "mention_ends", mention_ends
+    # print "mention_speaker_ids", mention_speaker_ids
+    # print "genre_emb", genre_emb
+
     num_mentions = util.shape(mention_emb, 0)
     max_antecedents = util.shape(antecedents, 1)
+
+    # print num_mentions, max_antecedents
 
     feature_emb_list = []
 
     if self.config["use_metadata"]:
       antecedent_speaker_ids = tf.gather(mention_speaker_ids, antecedents) # [num_mentions, max_ant]
+
+      # print "antecedent_speaker_ids"
+      # print antecedent_speaker_ids
+
       same_speaker = tf.equal(tf.expand_dims(mention_speaker_ids, 1), antecedent_speaker_ids) # [num_mentions, max_ant]
       speaker_pair_emb = tf.gather(tf.get_variable("same_speaker_emb", [2, self.config["feature_size"]]), tf.to_int32(same_speaker)) # [num_mentions, max_ant, emb]
       feature_emb_list.append(speaker_pair_emb)
 
+      # print "speaker_pair_emb"
+      # print speaker_pair_emb
+
+      # tile is duplicating data [a b c d] --> [a b c d a b c d]
       tiled_genre_emb = tf.tile(tf.expand_dims(tf.expand_dims(genre_emb, 0), 0), [num_mentions, max_antecedents, 1]) # [num_mentions, max_ant, emb]
       feature_emb_list.append(tiled_genre_emb)
+
+      # print "tiled_genre_emb"
+      # print tiled_genre_emb
 
     if self.config["use_features"]:
       target_indices = tf.range(num_mentions) # [num_mentions]
@@ -274,13 +336,30 @@ class CorefModel(object):
       mention_distance_emb = tf.gather(tf.get_variable("mention_distance_emb", [10, self.config["feature_size"]]), mention_distance_bins) # [num_mentions, max_ant]
       feature_emb_list.append(mention_distance_emb)
 
+      # print "mention_distance_emb"
+      # print mention_distance_emb
+    # print "shapes"
+    # print tf.shape(speaker_pair_emb)
+    # print tf.shape(tiled_genre_emb)
+    # print tf.shape(mention_distance_emb)
+
+    # phi(i, j)
     feature_emb = tf.concat(feature_emb_list, 2) # [num_mentions, max_ant, emb]
     feature_emb = tf.nn.dropout(feature_emb, self.dropout) # [num_mentions, max_ant, emb]
 
+    # print "feature_emb"
+    # print feature_emb
+
+    # g_i
     antecedent_emb = tf.gather(mention_emb, antecedents) # [num_mentions, max_ant, emb]
+    
+    # g_j 
     target_emb_tiled = tf.tile(tf.expand_dims(mention_emb, 1), [1, max_antecedents, 1]) # [num_mentions, max_ant, emb]
+    
+    # g_i . g_j
     similarity_emb = antecedent_emb * target_emb_tiled # [num_mentions, max_ant, emb]
 
+    # [g_i, g_j, g_i . g_j, phi(i, j)]
     pair_emb = tf.concat([target_emb_tiled, antecedent_emb, similarity_emb, feature_emb], 2) # [num_mentions, max_ant, emb]
 
     with tf.variable_scope("iteration"):
@@ -456,7 +535,8 @@ class CorefModel(object):
     coref_evaluator = metrics.CorefEvaluator()
 
     for example_num, (tensorized_example, example) in enumerate(self.eval_data):
-      _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
+      # _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
+      _, _, _, _, _, _, gold_starts, gold_ends, _, _ = tensorized_example
       feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
       candidate_starts, candidate_ends, mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = session.run(self.predictions, feed_dict=feed_dict)
 

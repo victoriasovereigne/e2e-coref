@@ -48,6 +48,7 @@ def output_conll(input_file, output_file, predictions):
       output_file.write(line)
       output_file.write("\n")
     else:
+      # print doc_key
       assert get_doc_key(row[0], row[1]) == doc_key
       coref_list = []
       if word_index in end_map:

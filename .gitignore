@@ -6,9 +6,12 @@
 *.txt
 *.txt.filtered
 *.tar.gz
+add_ner/*
 output*
 conll-2012/*
 docs/*
 html/*
 logs/*
 viz/*
+notes/*
+test_files/*
