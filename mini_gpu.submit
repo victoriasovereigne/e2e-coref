@@ -1,0 +1,20 @@
+################################################
+#
+# Extracting features for Coreference Resolution
+#
+################################################
+requirements = eldar
+getenv = true
++GPUJob = true
++Group = "GRAD"
++Project = "AI_ROBOTICS"
++ProjectDescription = "For my thesis work. Extracting features for Coreference Resolution"
+
+universe = vanilla
+executable = /bin/bash
+arguments = script_runner3.sh mini_gpu
+
+output = output.mini_gpu.$(Process)
+error = error.mini_gpu.$(Process)
+
+Queue

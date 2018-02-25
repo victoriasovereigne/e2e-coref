@@ -65,3 +65,6 @@ if __name__ == "__main__":
         print "Evaluation written to {} at step {}".format(log_dir, global_step)
 
         evaluated_checkpoints.add(ckpt.model_checkpoint_path)
+
+      else:
+        break

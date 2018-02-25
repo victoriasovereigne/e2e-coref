@@ -6,3 +6,5 @@ conll-2012
 *.txt
 *.txt.filtered
 *.v*_*_conll
+condor.*
+notes

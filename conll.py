@@ -90,7 +90,9 @@ def official_conll_eval(gold_path, predicted_path, metric, official_stdout=False
 
 def evaluate_conll(gold_path, predictions, official_stdout=False):
   with tempfile.NamedTemporaryFile(delete=False) as prediction_file:
+    print gold_path
     with open(gold_path, "r") as gold_file:
+      print gold_file
       output_conll(gold_file, prediction_file, predictions)
     print("Predicted conll file: {}".format(prediction_file.name))
   return { m: official_conll_eval(gold_file.name, prediction_file.name, m, official_stdout) for m in ("muc", "bcub", "ceafe") }

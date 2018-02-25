@@ -13,6 +13,7 @@ import coref_model as cm
 import util
 
 if __name__ == "__main__":
+  start_time = time.time()
   if len(sys.argv) > 1:
     name = sys.argv[1]
   else:
@@ -23,10 +24,11 @@ if __name__ == "__main__":
   config["log_dir"] = util.mkdirs(os.path.join(config["log_root"], name))
   util.print_config(config)
 
-  if "GPU" in os.environ:
-    util.set_gpus(int(os.environ["GPU"]))
-  else:
-    util.set_gpus()
+  print "Setting CUDA_VISIBLE_DEVICES to: {}".format(os.environ["CUDA_VISIBLE_DEVICES"])
+  # if "GPU" in os.environ:
+  #   util.set_gpus(int(os.environ["GPU"]))
+  # else:
+  #   util.set_gpus()
 
   model = cm.CorefModel(config)
   saver = tf.train.Saver()
@@ -34,6 +36,8 @@ if __name__ == "__main__":
 
   log_dir = config["log_dir"]
   writer = tf.summary.FileWriter(os.path.join(log_dir, "train"), flush_secs=20)
+
+  stopping_criteria = config["stopping_criteria"]
 
   # Create a "supervisor", which oversees the training process.
   sv = tf.train.Supervisor(logdir=log_dir,
@@ -45,6 +49,10 @@ if __name__ == "__main__":
   # The supervisor takes care of session initialization, restoring from
   # a checkpoint, and closing when done or an error occurs.
   with sv.managed_session() as session:
+
+    init_global_step = session.run(model.global_step)
+    print "init_global_step", init_global_step
+
     model.start_enqueue_thread(session)
     accumulated_loss = 0.0
     initial_time = time.time()
@@ -61,5 +69,11 @@ if __name__ == "__main__":
         writer.add_summary(util.make_summary({"loss": average_loss}), tf_global_step)
         accumulated_loss = 0.0
 
+      if tf_global_step > init_global_step + stopping_criteria:
+        sv.stop()
   # Ask for all the services to stop.
   sv.stop()
+  end_time = time.time()
+
+  running_time = end_time - start_time
+  print "Running time:", running_time

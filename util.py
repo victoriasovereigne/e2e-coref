@@ -31,6 +31,19 @@ def mkdirs(path):
       raise
   return path
 
+def load_pos_tags(filename):
+  print("Loading tags...", filename)
+
+  f = open(filename)
+  lines = f.readlines()
+  pos_tag_dict = {}
+
+  for i, line in enumerate(lines):
+    pos_tag_dict[line.strip()] = i
+
+  return pos_tag_dict
+
+
 def load_char_dict(char_vocab_path):
   vocab = [u"<unk>"]
   with open(char_vocab_path) as f:
@@ -195,3 +208,4 @@ class CustomLSTMCell(tf.contrib.rnn.RNNCell):
       params = np.concatenate([initializer([shape[0], o], dtype, partition_info) for o in output_sizes], 1)
       return params
     return _initializer
+

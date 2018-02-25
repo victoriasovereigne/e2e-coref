@@ -10,6 +10,7 @@ import collections
 
 import util
 import conll
+# from nltk.tag import StanfordNERTagger
 
 class DocumentState(object):
   def __init__(self):
@@ -20,6 +21,13 @@ class DocumentState(object):
     self.sentences = []
     self.clusters = collections.defaultdict(list)
     self.stacks = collections.defaultdict(list)
+
+    # I added this
+    self.pos_tags = [] # list of pos tags, should be equivalent to self.sentences
+    self.text_pos_tags = [] # should be equivalent to self.text
+    self.ner_tags = []
+    self.text_ner_tags = []
+    self.ner_stack = []
 
   def assert_empty(self):
     assert self.doc_key is None
@@ -62,7 +70,9 @@ class DocumentState(object):
       "doc_key": self.doc_key,
       "sentences": self.sentences,
       "speakers": self.speakers,
-      "clusters": merged_clusters
+      "clusters": merged_clusters,
+      "pos_tags": self.pos_tags, # I added this
+      "ner_tags": self.ner_tags
     }
 
 def normalize_word(word):
@@ -84,16 +94,58 @@ def handle_line(line, document_state):
     row = line.split()
     if len(row) == 0:
       document_state.sentences.append(tuple(document_state.text))
+
+      # print document_state.text
+      # print document_state.text_ner_tags
+
+      # I added this
+      document_state.pos_tags.append(tuple(document_state.text_pos_tags))
+      del document_state.text_pos_tags[:]
+
+      document_state.ner_tags.append(tuple(document_state.text_ner_tags))
+      del document_state.text_ner_tags[:]      
+
       del document_state.text[:]
       document_state.speakers.append(tuple(document_state.text_speakers))
       del document_state.text_speakers[:]
+
       return None
+    
+    # print line 
     assert len(row) >= 12
 
     word = normalize_word(row[3])
     coref = row[-1]
     doc_key = conll.get_doc_key(row[0], row[1])
+    # print doc_key
     speaker = row[9]
+
+    # I added this
+    pos_tag = row[4]
+    document_state.text_pos_tags.append(pos_tag)
+
+    # -------------------------------------------
+    # NER stuff
+    ner_tag = row[10]
+    ner = ''
+
+    if ner_tag[0] == "(": # beginning of tag
+      if ner_tag[-1] == ")": # one liner
+        ner = "B-" + ner_tag[1:-1]
+      else: 
+        ner = "B-" + ner_tag[1:-1]
+        document_state.ner_stack.append(ner_tag[1:-1])
+    else:
+      if len(document_state.ner_stack) > 0:
+        ner = "I-" + document_state.ner_stack[-1]
+        if ner_tag[-1] == ")":
+          document_state.ner_stack.pop()
+      else:
+        ner = "O"
+
+    document_state.text_ner_tags.append(ner)
+    # -------------------------------------------     
+
 
     word_index = len(document_state.text) + sum(len(s) for s in document_state.sentences)
     document_state.text.append(word)
@@ -102,7 +154,7 @@ def handle_line(line, document_state):
     if coref == "-":
       return None
 
-    for segment in coref.split("|"):
+    for segment in coref.split("|"):     
       if segment[0] == "(":
         if segment[-1] == ")":
           cluster_id = int(segment[1:-1])
@@ -125,7 +177,9 @@ def minimize_partition(name, language, extension):
     with open(output_path, "w") as output_file:
       document_state = DocumentState()
       for line in input_file.readlines():
+        # print input_path
         document = handle_line(line, document_state)
+
         if document is not None:
           output_file.write(json.dumps(document))
           output_file.write("\n")
@@ -135,6 +189,7 @@ def minimize_partition(name, language, extension):
 
 def minimize_language(language):
   minimize_partition("dev", language, "v4_auto_conll")
+  minimize_partition("dev2", language, "v4_auto_conll")
   minimize_partition("train", language, "v4_auto_conll")
   minimize_partition("test", language, "v4_gold_conll")
 
