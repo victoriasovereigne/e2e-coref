@@ -8,3 +8,5 @@ conll-2012
 *.v*_*_conll
 condor.*
 notes
+output.*
+error.*
