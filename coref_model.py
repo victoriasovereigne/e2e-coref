@@ -20,10 +20,20 @@ class CorefModel(object):
     self.categories_dict = util.load_pos_tags(config["categories_path"])
 
     self.embedding_info = [(emb["size"], emb["lowercase"]) for emb in config["embeddings"]]
-    self.embedding_size = sum(size for size, _ in self.embedding_info)
+    self.embedding_size = sum(size for size, _ in self.embedding_info) # 350
     self.char_embedding_size = config["char_embedding_size"]
+
+    self.glove_embedding_size = 300
+
     self.char_dict = util.load_char_dict(config["char_vocab_path"])
+    
+    # glove and turian
     self.embedding_dicts = [util.load_embedding_dict(emb["path"], emb["size"], emb["format"]) for emb in config["embeddings"]]
+    
+    # glove only
+    glove_emb = config["embeddings"][0]
+    self.glove_embedding_dict = util.load_embedding_dict(glove_emb["path"], glove_emb["size"], glove_emb["format"])
+
     self.max_mention_width = config["max_mention_width"]
     self.genres = { g:i for i,g in enumerate(config["genres"]) }
     self.eval_data = None # Load eval data lazily.
@@ -45,6 +55,7 @@ class CorefModel(object):
     input_props.append((tf.float32, [None, None, len(self.categories_dict)])) # categories
 
     input_props.append((tf.int32, [None])) # NER IDs. # matching speakers
+    input_props.append((tf.float32, [None, None, self.glove_embedding_size])) # categories with glove embeddings
 
     self.queue_input_tensors = [tf.placeholder(dtype, shape) for dtype, shape in input_props]
     dtypes, shapes = zip(*input_props)
@@ -86,11 +97,11 @@ class CorefModel(object):
           for example in train_examples:
             tensorized_example = self.tensorize_example(example, is_training=True)
             feed_dict = dict(zip(self.queue_input_tensors, tensorized_example))
-            try:
-              session.run(self.enqueue_op, feed_dict=feed_dict)
-            except Exception as e:
-              print e 
-              print example["categories"]
+            # try:
+            session.run(self.enqueue_op, feed_dict=feed_dict)
+            # except Exception as e:
+            #   print e 
+            #   print example["categories"]
 
       enqueue_thread = threading.Thread(target=_enqueue_loop)
       enqueue_thread.daemon = True
@@ -123,8 +134,8 @@ class CorefModel(object):
     # add POS tag and NER
     pos_tags = example["pos_tags"]
 
-    if self.config["use_categories"]:
-      categories = example["categories"] # categories
+    # if self.config["use_categories"]:
+    categories = example["categories"] # categories
 
     if self.config["use_ner_g"] or self.config["use_ner_phi"]:
       ner_tags = example["ner_tags"]
@@ -148,7 +159,15 @@ class CorefModel(object):
     for i, sentence in enumerate(sentences):
       for j, word in enumerate(sentence):
         current_dim = 0
+
+        # word embedding with glove
+        # k is index, 0 or 1
+        # d is embedding dict, turian or glove
+        # s is size (either 300 or 50)
+        # l is lowercase = true or false (usually false)
         for k, (d, (s,l)) in enumerate(zip(self.embedding_dicts, self.embedding_info)):
+          # print "s", s
+          # print "k", k
           if l:
             current_word = word.lower()
           else:
@@ -157,6 +176,8 @@ class CorefModel(object):
             oov_counts[k] += 1
           word_emb[i, j, current_dim:current_dim + s] = util.normalize(d[current_word])
           current_dim += s
+
+        # character embedding  
         char_index[i, j, :len(word)] = [self.char_dict[c] for c in word]
         
         # one hot encoding
@@ -173,7 +194,23 @@ class CorefModel(object):
           categories_emb[i, j, :] = np.zeros([len(self.categories_dict)])
           one = self.categories_dict.get(categories[i][j], 0)
           categories_emb[i, j, one] = 1
-          # print categories_emb.shape, example
+
+    # print type(self.glove_embedding_dict)
+    # print self.glove_embedding_dict
+    cat_glove_emb = np.zeros([len(sentences), max_sentence_length, self.glove_embedding_size])
+    
+    # print len(self.glove_embedding_dict)
+
+
+    if self.config["use_categories_glove"]:
+      for i, category in enumerate(categories):
+        for j, cat in enumerate(category):
+          # current_dim = 0
+          # for d in self.glove_embedding_dict:
+          if cat != '-':
+            # print cat
+            cat_glove_emb[i, j, :] = util.normalize(self.glove_embedding_dict[cat])
+            # current_dim += 300
 
     speaker_dict = { s:i for i,s in enumerate(set(speakers)) }
     speaker_ids = np.array([speaker_dict[s] for s in speakers])    
@@ -184,11 +221,14 @@ class CorefModel(object):
     gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
 
     if is_training and len(sentences) > self.config["max_training_sentences"]:
-      return self.truncate_example(word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, categories_emb, ner_ids)
+      return self.truncate_example(word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, categories_emb, ner_ids, cat_glove_emb)
+      # return self.truncate_example(word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, ner_ids)
     else:
-      return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, categories_emb, ner_ids
+      return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, categories_emb, ner_ids, cat_glove_emb
+      # return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, ner_ids
 
-  def truncate_example(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, categories_emb, ner_ids):
+  def truncate_example(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, categories_emb, ner_ids, cat_glove_emb):
+  # def truncate_example(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, ner_ids):
     max_training_sentences = self.config["max_training_sentences"]
     num_sentences = word_emb.shape[0]
     assert num_sentences > max_training_sentences
@@ -210,9 +250,13 @@ class CorefModel(object):
     categories_emb = categories_emb[sentence_offset:sentence_offset + max_training_sentences,:,:]
     ner_ids = ner_ids[word_offset: word_offset + num_words]
 
-    return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, categories_emb, ner_ids
+    cat_glove_emb = cat_glove_emb[sentence_offset:sentence_offset + max_training_sentences,:,:]
 
-  def get_predictions_and_loss(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tags, ner_tags, categories, ner_ids):
+    return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, categories_emb, ner_ids, cat_glove_emb
+    # return word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tag_emb, ner_tag_emb, ner_ids
+
+  def get_predictions_and_loss(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tags, ner_tags, categories, ner_ids, cat_glove):
+  # def get_predictions_and_loss(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids, pos_tags, ner_tags, ner_ids):
   # def get_predictions_and_loss(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids):
     self.dropout = 1 - (tf.to_float(is_training) * self.config["dropout_rate"])
     self.lexical_dropout = 1 - (tf.to_float(is_training) * self.config["lexical_dropout_rate"])
@@ -237,6 +281,9 @@ class CorefModel(object):
 
     if self.config["use_categories"]:
       text_emb_list.append(categories)
+
+    if self.config["use_categories_glove"]:
+      text_emb_list.append(cat_glove)
 
     text_emb = tf.concat(text_emb_list, 2)
     text_emb = tf.nn.dropout(text_emb, self.lexical_dropout)
@@ -558,7 +605,8 @@ class CorefModel(object):
 
     for example_num, (tensorized_example, example) in enumerate(self.eval_data):
       # _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
-      _, _, _, _, _, _, gold_starts, gold_ends, _, _, _, _, _ = tensorized_example
+      _, _, _, _, _, _, gold_starts, gold_ends, _, _, _, _, _, _ = tensorized_example
+      # _, _, _, _, _, _, gold_starts, gold_ends, _, _, _, _ = tensorized_example
       feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
       candidate_starts, candidate_ends, mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = session.run(self.predictions, feed_dict=feed_dict)
 

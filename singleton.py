@@ -24,7 +24,8 @@ if __name__ == "__main__":
   config["log_dir"] = util.mkdirs(os.path.join(config["log_root"], name))
   util.print_config(config)
 
-  print "Setting CUDA_VISIBLE_DEVICES to: {}".format(os.environ["CUDA_VISIBLE_DEVICES"])
+  # print "Setting CUDA_VISIBLE_DEVICES to: {}".format(os.environ["CUDA_VISIBLE_DEVICES"])
+  print "Setting CUDA_VISIBLE_DEVICES to: ", str(os.environ["CUDA_VISIBLE_DEVICES"])
   # if "GPU" in os.environ:
   #   util.set_gpus(int(os.environ["GPU"]))
   # else:
@@ -48,6 +49,15 @@ if __name__ == "__main__":
 
   # The supervisor takes care of session initialization, restoring from
   # a checkpoint, and closing when done or an error occurs.
+  '''
+  a = tf.constant([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], shape=[2, 3], name='a')
+  b = tf.constant([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], shape=[3, 2], name='b')
+  c = tf.matmul(a, b)
+  # Creates a session with log_device_placement set to True.
+  sess = tf.Session(config=tf.ConfigProto(log_device_placement=True))
+  # Runs the op.
+  print(sess.run(c))
+  '''
   with sv.managed_session() as session:
 
     init_global_step = session.run(model.global_step)
@@ -58,6 +68,7 @@ if __name__ == "__main__":
     initial_time = time.time()
     while not sv.should_stop():
       tf_loss, tf_global_step, _ = session.run([model.loss, model.global_step, model.train_op])
+      # print "use_gpu", use_gpu
       accumulated_loss += tf_loss
 
       if tf_global_step % report_frequency == 0:
@@ -69,7 +80,9 @@ if __name__ == "__main__":
         writer.add_summary(util.make_summary({"loss": average_loss}), tf_global_step)
         accumulated_loss = 0.0
 
-      if tf_global_step > init_global_step + stopping_criteria:
+        # 220001 > 200000 + 20000
+      # if tf_global_step > init_global_step + stopping_criteria:
+      if tf_global_step > stopping_criteria:
         sv.stop()
   # Ask for all the services to stop.
   sv.stop()

@@ -6,6 +6,7 @@ import json
 import numpy as np
 import tensorflow as tf
 import pyhocon
+from flip_gradient import *
 
 def make_summary(value_dict):
   return tf.Summary(value=[tf.Summary.Value(tag=k, simple_value=v) for k,v in value_dict.items()])
@@ -97,10 +98,64 @@ def ffnn(inputs, num_hidden_layers, hidden_size, output_size, dropout, output_we
   output_bias = tf.get_variable("output_bias", [output_size])
   outputs = tf.matmul(current_inputs, output_weights) + output_bias
 
+  # print "tf output", outputs.shape
+
   if len(inputs.get_shape()) == 3:
     outputs = tf.reshape(outputs, [shape(inputs, 0), shape(inputs, 1), output_size])
   elif len(inputs.get_shape()) > 3:
     raise ValueError("FFNN with rank {} not supported".format(len(inputs.get_shape())))
+  return outputs
+
+# same as ffnn but with a flip gradient layer, and one hidden layer only
+def dann(inputs, hidden_size, output_size, dropout, l, output_weights_initializer=None, name="1"):
+  if len(inputs.get_shape()) > 2:
+    current_inputs = tf.reshape(inputs, [-1, shape(inputs, -1)])
+  else:
+    current_inputs = inputs
+
+  feat = flip_gradient(current_inputs, l)
+  # --------------------------------
+  # layer 0
+  # --------------------------------
+  i = 0
+  hidden_weights = tf.get_variable("dann_hidden_weights_{}".format(i)+name, [shape(current_inputs, 1), hidden_size])
+  hidden_bias = tf.get_variable("dann_hidden_bias_{}".format(i)+name, [hidden_size]) # 150
+  current_outputs = tf.nn.relu(tf.matmul(feat, hidden_weights) + hidden_bias)
+
+  print current_inputs.shape, "ci init"
+  print feat.shape, "feat"          # N x 1320
+  print hidden_weights.shape, "hw"  # 1320 x 150 # result --> N x 150
+  
+  print hidden_bias.shape, "hb"     # 150 x 1
+  print current_outputs.shape, "co" # N x 150
+
+  if dropout is not None:
+    current_outputs = tf.nn.dropout(current_outputs, dropout)
+  current_inputs = current_outputs
+
+  i = 1
+  hidden_weights = tf.get_variable("dann_hidden_weights_{}".format(i)+name, [shape(current_inputs, 1), hidden_size])
+  hidden_bias = tf.get_variable("dann_hidden_bias_{}".format(i)+name, [hidden_size])
+  current_outputs = tf.nn.relu(tf.matmul(current_inputs, hidden_weights) + hidden_bias)
+
+  if dropout is not None:
+    current_outputs = tf.nn.dropout(current_outputs, dropout)
+  current_inputs = current_outputs
+
+  output_weights = tf.get_variable("dann_output_weights"+name, [shape(current_inputs, 1), output_size], initializer=output_weights_initializer)
+  output_bias = tf.get_variable("dann_output_bias"+name, [output_size])
+  outputs = tf.matmul(current_inputs, output_weights) + output_bias
+
+  print current_inputs.shape, "ci"  # N x 150 
+  print output_weights.shape, "ow"  # 150 x 7 # result --> N x 7
+  
+  print output_bias.shape, "ob"     # 7 x 1
+  print outputs.shape, "o"          # N x 7
+
+  if len(inputs.get_shape()) == 3:
+    outputs = tf.reshape(outputs, [shape(inputs, 0), shape(inputs, 1), output_size])
+  elif len(inputs.get_shape()) > 3:
+    raise ValueError("DANN with rank {} not supported".format(len(inputs.get_shape())))
   return outputs
 
 def cnn(inputs, filter_sizes, num_filters):

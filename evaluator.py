@@ -11,6 +11,7 @@ import shutil
 import numpy as np
 import tensorflow as tf
 import coref_model as cm
+# import coref_model2 as cm
 import util
 
 def copy_checkpoint(source, target):
@@ -18,6 +19,7 @@ def copy_checkpoint(source, target):
     shutil.copyfile(source + ext, target + ext)
 
 if __name__ == "__main__":
+  start = time.time()
   util.set_gpus()
 
   if len(sys.argv) > 1:
@@ -68,3 +70,7 @@ if __name__ == "__main__":
 
       else:
         break
+
+  end = time.time()
+  running_time = end - start
+  print "Running time", running_time

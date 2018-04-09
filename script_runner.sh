@@ -1,6 +1,6 @@
 #!/bin/bash
-export GPU="01"
-export CUDA_VISIBLE_DEVICES="01"
+export CUDA_VISIBLE_DEVICES="0,1"
+export GPU="0"
 
 echo $1
 
